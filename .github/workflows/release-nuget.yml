@@ -49,10 +49,10 @@ jobs:
     steps:
 
       - name: "Clone Git repository"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: "Setup .NET"
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
@@ -89,7 +89,7 @@ jobs:
             "${EXTRA_ARGUMENTS[@]}"
 
       - name: "Upload packages as artifact"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "nupkg"
           path: "./nupkg/**/*.nupkg"
@@ -106,15 +106,15 @@ jobs:
     steps:
 
       - name: "Clone Git repository"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: "Setup .NET"
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
       - name: "Download packages"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: "nupkg"
           path: "./nupkg"
@@ -131,7 +131,7 @@ jobs:
         run: dotnet nuget push "./nupkg/**/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate --api-key "$NUGET_API_KEY"
 
       - name: "Create tag and GitHub release"
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           prerelease: ${{ inputs.pre-release }}
