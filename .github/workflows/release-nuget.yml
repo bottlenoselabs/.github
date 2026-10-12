@@ -1,0 +1,139 @@
+name: "Release NuGet packages"
+
+# Reusable workflow: packs a .NET solution/project, publishes the packages to NuGet.org
+# using trusted publishing and creates a GitHub release.
+#
+# The calling job must grant `contents: write` and `id-token: write`, and the calling
+# repository needs a Trusted Publishing policy on nuget.org.
+
+on:
+  workflow_call:
+    inputs:
+      pre-release:
+        description: 'Is pre-release? A default version gets an `-rc` suffix; a custom version must include its own pre-release suffix, for example `1.0.0-rc.1`.'
+        type: boolean
+        required: true
+      version:
+        description: 'Version. If left blank, the current date is used as the version.'
+        type: string
+        required: false
+        default: ''
+      project-path:
+        description: 'Path of the solution or project to pack.'
+        type: string
+        required: false
+        default: './src/cs'
+      pack-arguments:
+        description: 'Extra arguments for `dotnet pack`, for example `-p:MyProperty=true`. Separated by spaces; quoting is not supported.'
+        type: string
+        required: false
+        default: ''
+    secrets:
+      NUGET_USER:
+        description: 'The nuget.org profile name of the Trusted Publishing policy creator.'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  pack-job:
+    name: "Pack"
+    # NuGet.org packages are permanent, so only release from the main branch
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.set-version.outputs.VERSION }}
+    steps:
+
+      - name: "Clone Git repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: "Setup .NET"
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: "Set version"
+        id: set-version
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          IS_PRERELEASE: ${{ inputs.pre-release }}
+        run: |
+          VERSION="$VERSION_INPUT"
+          if [[ -z "$VERSION" ]]; then
+            # Date without zero padding so the Git tag matches the version NuGet normalizes to
+            VERSION="$(date +'%Y.%-m.%-d')"
+            if [[ "$IS_PRERELEASE" = "true" ]]; then
+              VERSION="$VERSION-rc"
+            fi
+          fi
+
+          echo "VERSION=$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: ".NET pack"
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          PACK_ARGUMENTS: ${{ inputs.pack-arguments }}
+          VERSION: ${{ steps.set-version.outputs.VERSION }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          read -ra EXTRA_ARGUMENTS <<< "$PACK_ARGUMENTS"
+          dotnet pack "$PROJECT_PATH" --nologo --verbosity minimal --configuration Release \
+            -p:PackageVersion="$VERSION" -p:RepositoryBranch="$BRANCH" -p:RepositoryCommit="$COMMIT" \
+            "${EXTRA_ARGUMENTS[@]}"
+
+      - name: "Upload packages as artifact"
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: "nupkg"
+          path: "./nupkg/**/*.nupkg"
+          if-no-files-found: error
+
+  publish-nuget-job:
+    name: "Publish to NuGet and create GitHub release"
+    needs: [pack-job]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write # Required for NuGet trusted publishing (OIDC)
+    steps:
+
+      - name: "Clone Git repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: "Setup .NET"
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: "Download packages"
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: "nupkg"
+          path: "./nupkg"
+
+      - name: "Login to NuGet (trusted publishing)"
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: "Upload packages to NuGet"
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "./nupkg/**/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate --api-key "$NUGET_API_KEY"
+
+      - name: "Create tag and GitHub release"
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          generate_release_notes: true
+          prerelease: ${{ inputs.pre-release }}
+          tag_name: "v${{ needs.pack-job.outputs.version }}"
+          target_commitish: ${{ github.sha }}
