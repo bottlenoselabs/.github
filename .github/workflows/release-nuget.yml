@@ -23,6 +23,11 @@ on:
         type: string
         required: false
         default: './src/cs'
+      pack-arguments:
+        description: 'Extra arguments for `dotnet pack`, for example `-p:MyProperty=true`. Separated by spaces; quoting is not supported.'
+        type: string
+        required: false
+        default: ''
     secrets:
       NUGET_USER:
         description: 'The nuget.org profile name of the Trusted Publishing policy creator.'
@@ -73,9 +78,15 @@ jobs:
       - name: ".NET pack"
         env:
           PROJECT_PATH: ${{ inputs.project-path }}
+          PACK_ARGUMENTS: ${{ inputs.pack-arguments }}
           VERSION: ${{ steps.set-version.outputs.VERSION }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: dotnet pack "$PROJECT_PATH" --nologo --verbosity minimal --configuration Release -p:PackageVersion="$VERSION" -p:RepositoryBranch="$BRANCH" -p:RepositoryCommit="${{ github.sha }}"
+          COMMIT: ${{ github.sha }}
+        run: |
+          read -ra EXTRA_ARGUMENTS <<< "$PACK_ARGUMENTS"
+          dotnet pack "$PROJECT_PATH" --nologo --verbosity minimal --configuration Release \
+            -p:PackageVersion="$VERSION" -p:RepositoryBranch="$BRANCH" -p:RepositoryCommit="$COMMIT" \
+            "${EXTRA_ARGUMENTS[@]}"
 
       - name: "Upload packages as artifact"
         uses: actions/upload-artifact@v4
